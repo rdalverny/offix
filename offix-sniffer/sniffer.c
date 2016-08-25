@@ -7,10 +7,8 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <getopt.h>
 
-#define DEVICE ("wlan0")
-#define QUEUE_HOSTNAME ("localhost")
-#define QUEUE_PORT (5672)
 #define QUEUE_EXCHANGE_NAME ("offix")
 
 void parse_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet);
@@ -18,20 +16,59 @@ void die(const char *context);
 void die_on_amqp_error(amqp_rpc_reply_t reply, const char *context);
 void die_if_null(const void *ptr, const char *context);
 
-amqp_connection_state_t queue_connect();
+amqp_connection_state_t queue_connect(const char *hostname, const uint16_t port, const char *user, const char *pass);
 void send_message(amqp_connection_state_t conn, const char *body);
+void usage();
 
-int main()
+struct arguments {
+    int use_queue;
+    char *network_device;
+    char *queue_hostname;
+    uint16_t queue_port;
+    char *queue_user;
+    char *queue_pass;
+};
+
+void parse_arguments(int argc, char *argv[], struct arguments *args)
+{
+    int opt;
+
+    while ((opt = getopt(argc, argv, "i:h:p:s")) != -1) {
+        switch (opt) {
+        case 'i': args->network_device = optarg; break;
+        case 'h': args->queue_hostname = optarg; break;
+        case 'p': args->queue_port = atoi(optarg); break;
+        case 's': args->use_queue = 0;
+        default:
+            usage();
+        }
+    }
+}
+
+int main(int argc, char *argv[])
 {
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_t *handle;
     char filter_exp[] = "type mgt subtype probe-req";
     struct bpf_program fp;
-    amqp_connection_state_t conn;
+    amqp_connection_state_t conn = NULL;
 
-    conn = queue_connect();
+    struct arguments args;
+    args.use_queue = 1;
+    args.network_device = "wlan0";
+    args.queue_hostname = "localhost";
+    args.queue_port = 5672;
+    args.queue_user = "guest";
+    args.queue_pass = "guest";
 
-    handle = pcap_open_live(DEVICE, BUFSIZ, 1, 1000, errbuf);
+    parse_arguments(argc, argv, &args);
+
+    if (args.use_queue)
+    {
+        conn = queue_connect(args.queue_hostname, args.queue_port, args.queue_user, args.queue_pass);
+    }
+
+    handle = pcap_open_live(args.network_device, BUFSIZ, 1, 1000, errbuf);
     if (handle == NULL)
     {
         die("Couldn't open device");
@@ -55,7 +92,11 @@ int main()
 
     pcap_freecode(&fp);
     pcap_close(handle);
-    amqp_connection_close(conn, AMQP_REPLY_SUCCESS);
+
+    if (args.use_queue)
+    {
+        amqp_connection_close(conn, AMQP_REPLY_SUCCESS);
+    }
 
     return 0;
 }
@@ -88,7 +129,10 @@ void parse_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *
         frame->sa[4],
         frame->sa[5]);
     // publish
-    send_message(conn, buf);
+    if (conn != NULL)
+    {
+        send_message(conn, buf);
+    }
     printf("%s\n", buf); // also print to help with debugging
 }
 
@@ -108,7 +152,7 @@ void send_message(amqp_connection_state_t conn, const char *body)
     }
 }
 
-amqp_connection_state_t queue_connect()
+amqp_connection_state_t queue_connect(const char *hostname, const uint16_t port, const char *user, const char *pass)
 {
     amqp_socket_t *socket;
     amqp_connection_state_t conn;
@@ -117,13 +161,13 @@ amqp_connection_state_t queue_connect()
     conn = amqp_new_connection();
     socket = amqp_tcp_socket_new(conn);
     die_if_null(socket, "Error creating TCP socket");
-    status = amqp_socket_open(socket, QUEUE_HOSTNAME, QUEUE_PORT);
+    status = amqp_socket_open(socket, hostname, port);
     if (status != AMQP_STATUS_OK)
     {
         die("Error opening TCP socket");
     }
     die_on_amqp_error(amqp_login(conn, "/", 0, 131072, 0,
-        AMQP_SASL_METHOD_PLAIN, "guest", "guest"), "logging in");
+        AMQP_SASL_METHOD_PLAIN, user, pass), "logging in");
     amqp_channel_open(conn, 1);
     die_on_amqp_error(amqp_get_rpc_reply(conn), "opening channel");
 
@@ -152,4 +196,16 @@ void die(const char *context)
 {
     fprintf(stderr, "%s\n", context);
     exit(1);
+}
+
+void usage()
+{
+    fprintf(stderr, "Usage:  sniffer [-i interface]\n");
+    fprintf(stderr, "                [-h hostname] [-p port] [-s]\n\n");
+    fprintf(stderr, "        -i interface    which network interface to listen to\n");
+    fprintf(stderr, "        -h hostname     queue server hostname\n");
+    fprintf(stderr, "        -p port         queue server port\n");
+    fprintf(stderr, "        -s              do not connect/use the queue server\n");
+
+    exit(EXIT_FAILURE);
 }
