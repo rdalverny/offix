@@ -65,7 +65,12 @@ void parse_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *
     amqp_connection_state_t conn;
     struct ieee80211_radiotap_header *radiotap;
     struct mgmt_header_t *frame;
-    char buf[6*2 + (6 - 1) + 1];
+    char buf[6*2 + (6 - 1) + 1 + 2 + 1 + 26 + 1];
+    struct radiotap_data_t *data;
+    uint8_t antsignal = 0;
+    time_t timer;
+    char timestamp[26];
+    struct tm* tm_info;
 
     conn = (amqp_connection_state_t) args;
 
@@ -80,13 +85,27 @@ void parse_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *
         return;
     }
     frame = (struct mgmt_header_t *) (packet + radiotap->it_len);
-    snprintf(buf, sizeof(buf), "%02x:%02x:%02x:%02x:%02x:%02x",
+
+    if (radiotap->it_present == 0x0000482E)
+    {
+        data = (struct radiotap_data_t *) (packet + 8);
+        antsignal = 256 - data->antsignal;
+    }
+
+    time(&timer);
+    tm_info = localtime(&timer);
+    strftime(timestamp, 26, "%FT%T%z", tm_info);
+
+    snprintf(buf, sizeof(buf), "%02x:%02x:%02x:%02x:%02x:%02x\t%02u\t%s",
         frame->sa[0],
         frame->sa[1],
         frame->sa[2],
         frame->sa[3],
         frame->sa[4],
-        frame->sa[5]);
+        frame->sa[5],
+        antsignal,
+        timestamp);
+
     // publish
     send_message(conn, buf);
     printf("%s\n", buf); // also print to help with debugging
