@@ -58,7 +58,7 @@ userSchema.statics.authenticate = function(username, password, callback) {
   });
 };
 
-userSchema.statics.seen = function(address, callback) {
+userSchema.statics.seen = function(address, antsignal, timestamp, callback) {
   // there really shouldn't be more than one, but if there is, just update all
   // of them
   var now = new Date();

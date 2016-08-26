@@ -96,6 +96,7 @@ void parse_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *
     tm_info = localtime(&timer);
     strftime(timestamp, 26, "%FT%T%z", tm_info);
 
+    // format is "mac-address antsignal timestamp", tab-separated
     snprintf(buf, sizeof(buf), "%02x:%02x:%02x:%02x:%02x:%02x\t%02u\t%s",
         frame->sa[0],
         frame->sa[1],
